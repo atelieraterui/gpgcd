@@ -129,16 +129,16 @@ local
         polynorm(expand(d2 * bnew - fnew), var, 2)^2 +
         polynorm(expand(d2 * anew - gnew), var, 2)^2
                     );
-    userinfo(2, gpgcd_real, `sqrt(|d1 * bnew - fnew|^2 + |d1 * anew - gnew|^2) =`,
+    userinfo(2, gpgcd_real_gp, `sqrt(|d1 * bnew - fnew|^2 + |d1 * anew - gnew|^2) =`,
              residue1);
-    userinfo(2, gpgcd_real, `sqrt(|d2 * bnew - fnew|^2 + |d2 * anew - gnew|^2) =`,
+    userinfo(2, gpgcd_real_gp, `sqrt(|d2 * bnew - fnew|^2 + |d2 * anew - gnew|^2) =`,
              residue2);
     if residue1 <= residue2 then
         gcd := d1;
-        userinfo(2, gpgcd_real, `the selected common divisor is d1`);
+        userinfo(2, gpgcd_real_gp, `the selected common divisor is d1`);
     else
         gcd := d2;
-        userinfo(2, gpgcd_real, `the selected common divisor is d2`);
+        userinfo(2, gpgcd_real_gp, `the selected common divisor is d2`);
     end;
 
     # Re-define fnew and gnew
@@ -272,10 +272,10 @@ local degf, degg, degp, dega, degb, fcoef, gcoef, smat, abcoef, result, i;
     return result
 end proc;
 
-modnewtoniterate_real := proc (const0, inipoint, degf, degg, degp,
+gpiterate_real := proc (const0, inipoint, degf, degg, degp,
                      stopcriterion, numite)
 
-# modnewtoniterate_real: iteration routine of modified Newton method
+# gpiterate_real: iteration routine of the gradient projection method
 
 # Inputs:
 # const0, inipoint: the coefficient vectors of initial polynomials
@@ -292,49 +292,65 @@ modnewtoniterate_real := proc (const0, inipoint, degf, degg, degp,
 # numite: the number of iterations taken
 # dv0: the coefficient vector of calculated polynomials
 
-local i, j, vv, vvdim, dv, dv0, dvnorm;
-    vv := inipoint;
+local
+    i,
+    j,
+    v1,
+    vv,
+    vvdim,
+    dv,
+    dv0,
+    dvnorm;
+    vv := gprestore_real(inipoint, degf, degg, degp, stopcriterion, numite);
+#    vv := inipoint;
     vvdim := Dimension(inipoint);
     dv := Vector(vvdim);
     for i to numite do
-        userinfo(2, modnewtoniterate_real, `Iteration`, i, print());
+        userinfo(2, gpiterate_real, `Iteration`, i, print());
 
         # calculate the next iterate
 
-        dv0 := modnewtonsolve_real(const0, vv, degf, degg, degp);
+        # projection phase
 
-        for j to vvdim do
-            dv[j] := dv0[j];
-        end do;
+        dv := gpproject_real(const0, vv, degf, degg, degp);
+        v1 := vv + dv;
         dvnorm := Norm(dv, 2);
-        vv := vv + dv;
 
-        userinfo(2, modnewtoniterate_real, `vv =`, vv, print());
-        userinfo(2, modnewtoniterate_real, `dv =`, dv, print());
-        userinfo(2, modnewtoniterate_real, `Norm(dv) =`, dvnorm, print());
+        # restoration phase
+
+        vv := gprestore_real (v1, degf, degg, degp, stopcriterion, numite);
+
+#        for j to vvdim do
+#            dv[j] := dv0[j];
+#        end do;
+#        vv := vv + dv;
+
+        userinfo(2, gpiterate_real, `vv =`, vv, print());
+        userinfo(2, gpiterate_real, `dv =`, dv, print());
+        userinfo(2, gpiterate_real, `Norm(dv) =`, dvnorm, print());
 
         if dvnorm < stopcriterion then
-            userinfo(1, modnewtoniterate_real, `converges at iteration`, i);
-            for j to vvdim do
-                dv0[j] := vv[j];
-            end do;
-            return i, dv0;
+            userinfo(1, gpiterate_real, `converges at iteration`, i);
+#            for j to vvdim do
+#                dv0[j] := vv[j];
+#            end do;
+            return i, vv;
         end if;
     end do;
 
     # if the value does not converge within the threshold number of
     # iterations, then return the result at that time
 
-    for j to vvdim do
-        dv0[j] := vv[j];
-    end do;
-    return numite, dv0;
+#    for j to vvdim do
+#        dv0[j] := vv[j];
+#    end do;
+    return numite, vv;
 end proc;
 
-modnewtonsolve_real := proc (const0, v0, degf, degg, degp)
+gpproject_real := proc (const0, v0, degf, degg, degp)
 
-# modnewtonsolve_real: calculating ONE iteration of the modified
-# Newton method
+# gpproject_real: calculating a projection of the gradient projection
+# method
 
 # Inputs:
 # const0: the vector of coefficients of initial polynomials
@@ -347,35 +363,103 @@ modnewtonsolve_real := proc (const0, v0, degf, degg, degp)
 # LinearSolve(jmat, df): the output of LinearSolve
 # note that the output is a Maple 'vector'
 
-local i, dega, degb, fvect, gvect, avect, bvect, jmat, constraintvalue,
-    const0diff, dfdim, df;
+local i,
+    dega,
+    degb,
+    fvect,
+    gvect,
+    avect,
+    bvect,
+    jmat, # Jacobian matrix
+    pmat, # projection matrix
+    constraintvalue,
+    const0diff,
+    dfdim,
+    df;
+
     # with(LinearAlgebra);
+
     dega := degg - degp - 1;
     degb := degf - degp - 1;
     fvect := v0[1 .. degf + 1];
     gvect := v0[degf + 2 .. degf + degg + 2];
     avect := v0[degf + degg + 3 .. degf + degg + dega + 3];
     bvect := v0[degf + degg + dega + 4 .. degf + degg + dega + degb + 4];
-    jmat := jacobianmat_real(fvect, gvect, avect, bvect, degp);
-    constraintvalue := -1.0 * constrainteval_real(fvect, gvect, avect, bvect, degp);
-    # const0diff := Vector(degf + degg + dega + degb + 4);
-    const0diff := const0 - v0;
-    dfdim := 3 * (degf + degg - degp + 1);
-    df := Vector(dfdim);
-#    for i to degf + degg + 2 do
-    for i to degf + degg + dega + degb + 4 do
-        df[i] := const0diff[i];
-    end do;
-    for i to degf + degg - degp + 1 do
-        df[degf + degg + dega + degb + 4 + i] := constraintvalue[i];
-    end do;
-    userinfo(2, modnewtonsolve_real, `df =`, df, print());
-    return LinearSolve(jmat, df)
+
+    jmat := jacobianmat_real_gp (fvect, gvect, avect, bvect, degp);
+    pmat := IdentityMatrix (ColumnDimension(jmat)) -
+    MatrixInverse(jmat) . jmat;
+
+    df := convert(
+        <(const0 - v0)[1 .. degf + degg + 2], Vector(dega + degb + 2)>,
+        Vector);
+
+    userinfo(2, gpproject_real, `df =`, df, print());
+
+    return pmat . df
 end proc;
 
-jacobianmat_real := proc (fvect, gvect, avect, bvect, degp)
+gprestore_real := proc (v0, degf, degg, degp, stopcriterion, numite)
 
-# jacobianmat_real: calculate the Jacobian matrix for a iteration
+local
+    i,
+    dega,
+    degb,
+    fvect,
+    gvect,
+    avect,
+    bvect,
+    jmat,
+    vv,
+    constval,
+    dv,
+    dvnorm;
+
+    # DEBUG();
+
+    # with(LinearAlgebra);
+    dega := degg - degp - 1;
+    degb := degf - degp - 1;
+
+    vv := v0;
+
+    fvect := vv[1 .. degf + 1];
+    gvect := vv[degf + 2 .. degf + degg + 2];
+    avect := vv[degf + degg + 3 .. degf + degg + dega + 3];
+    bvect := vv[degf + degg + dega + 4 .. degf + degg + dega + degb + 4];
+    constval := constrainteval_real(fvect, gvect, avect, bvect, degp);
+
+    for i to numite do
+        jmat := jacobianmat_real_gp (fvect, gvect, avect, bvect, degp);
+        dv := MatrixInverse(jmat) . (- constval);
+        vv := vv + dv;
+        dvnorm := Norm(dv, 2);
+        fvect := vv[1 .. degf + 1];
+        gvect := vv[degf + 2 .. degf + degg + 2];
+        avect := vv[degf + degg + 3 .. degf + degg + dega + 3];
+        bvect := vv[degf + degg + dega + 4 .. degf + degg + dega + degb + 4];
+        constval := constrainteval_real(fvect, gvect, avect, bvect, degp);
+
+        userinfo(2, gprestore_real, `dv =`, dv, print());
+        userinfo(2, gprestore_real, `Norm(dv) =`, dvnorm, print());
+        userinfo(2, gprestore_real, `vv =`, vv, print());
+        userinfo(2, gprestore_real, `constval =`, constval, print());
+
+        if dvnorm < stopcriterion then
+            userinfo(1, gprestore_real, `converges at iteration`, i);
+            return vv;
+        end if;
+    end do;
+
+    userinfo(1, gpresore_real, `does not converge within iteration`, i);
+    return vv
+end proc;
+
+
+jacobianmat_real_gp := proc (fvect, gvect, avect, bvect, degp)
+
+# jacobianmat_real_gp : calculate the Jacobian matrix for a iteration for
+# the gradient projection
 
 # Inputs:
 # fvect: the coefficient vector of f
@@ -388,73 +472,24 @@ jacobianmat_real := proc (fvect, gvect, avect, bvect, degp)
 # jmat: the Jacobian matrix
 
 local
-    i, j, #indices
     degf,
     degg,
-    dega,
-    degb,
-    jmatdim,
-    jmat,
-    offset1,
-    offset2;
+    abvect,
+    smat,
+    jmat;
 
     # with (LinearAlgebra);
 
     degf := Dimension(fvect) - 1;
     degg := Dimension(gvect) - 1;
-    dega := Dimension(avect) - 1;
-    degb := Dimension(bvect) - 1;
-    jmatdim := 3*(degf + degg - degp + 1);
-    jmat := Matrix(jmatdim);
-    for i to degf+degg+dega+degb+4 do
-        jmat[i,i] := 1.0;
-    end do;
-    offset2 := degf+degg+dega+degb+5;
 
-    # Putting coefficients of a and b for the constraint of the norm
-    for i to dega+1 do
-        jmat[degf+degg+2+i, offset2] := -2.0*avect[i];
-        jmat[offset2, degf+degg+2+i] := 2.0*avect[i];
-    end do;
-    for i to degb+1 do
-        jmat[degf+degg+dega+3+i, offset2] := -2.0*bvect[i];
-        jmat[offset2, degf+degg+dega+3+i] := 2.0*bvect[i];
-    end do;
-
-    # Putting the coefficients of a
-    for i to degf+1 do
-        for j to dega+1 do
-            jmat[i, offset2+i+j-1] := -1.0*avect[j];
-            jmat[offset2+i+j-1, i] := avect[j];
-        end do;
-    end do;
-
-    # Putting the coefficients of b
-    offset1 := degf + 1;
-    for i to degg+1 do
-        for j to degb+1 do
-            jmat[offset1+i, offset2+i+j-1] := -1.0*bvect[j];
-            jmat[offset2+i+j-1, offset1+i] := bvect[j];
-        end do;
-    end do;
-
-    # Putting the coefficients of f
-    offset1 := degf + degg + 2;
-    for i to dega+1 do
-        for j to degf+1 do
-            jmat[offset1+i, offset2+i+j-1] := -1.0*fvect[j];
-            jmat[offset2+i+j-1, offset1+i] := fvect[j];
-        end do;
-    end do;
-
-    # Putting the coefficients of g
-    offset1 := degf + degg + dega + 3;
-    for i to degb+1 do
-        for j to degg+1 do
-            jmat[offset1+i, offset2+i+j-1] := -1.0*gvect[j];
-            jmat[offset2+i+j-1, offset1+i] := gvect[j];
-        end do;
-    end do;
+    smat := subresmat_vect(fvect, gvect, degp);
+    abvect := 2 * Transpose(convert(<avect , bvect>, Vector));
+    jmat := convert(
+        < <Vector[row](Dimension(fvect)) | Vector[row](Dimension(gvect)) |
+        abvect>,
+        <convmat_vect(avect, degf) | convmat_vect(bvect, degg) | smat> >,
+        Matrix);
     return jmat
 end proc;
 
@@ -478,21 +513,11 @@ local i, degf, degg, dega, degb, smat, abvect, smatvect, valuevect;
     degg := Dimension(gvect) - 1;
     dega := Dimension(avect) - 1;
     degb := Dimension(bvect) - 1;
-#    smat := constraintsmat_real(fvect, gvect, degp);
     smat := subresmat_vect(fvect, gvect, degp);
-    abvect := Vector(dega + degb + 2);
-    for i to dega + 1 do
-        abvect[i] := avect[i];
-    end do;
-    for i to degb + 1 do
-        abvect[dega + 1 + i] := bvect[i];
-    end do;
-    smatvect := smat . abvect;
-    valuevect := Vector(degf + degg - degp + 1);
-    for i to degf + degg - degp do
-        valuevect[i + 1] := smatvect[i];
-    end do;
-    valuevect[1] := DotProduct(abvect, abvect) - 1.0;
+    abvect := convert(<avect, bvect>, Vector);
+    valuevect := convert(
+        <DotProduct(abvect, abvect) - 1.0, smat . abvect>,
+        Vector);
     return valuevect
 end proc;
 
@@ -560,6 +585,35 @@ local i, j, polcoef, polcoefdim, coefmatrowdim, coefmatcoldim, coefmat;
     end;
     return coefmat
 end proc;
+
+convmat_vect := proc (polvect, deg)
+
+# convmat_vect: construct the convoluiton matrix of a polynomial from
+# the coefficient vector
+
+# Inputs:
+# polvect: coefficient vector of pol
+#        for pol = f_m x^m + ... + f_0 x^0,
+#        polvect := [f_m, ... , f_0]
+# deg: the degree; note that column dimension = deg + 1
+
+# Output:
+# coefmat: the convolution matrix
+
+local i, j, polcoef, polcoefdim, coefmatrowdim, coefmatcoldim, coefmat;
+
+    polcoefdim := Dimension(polvect);
+    coefmatcoldim := deg + 1;
+    coefmatrowdim := polcoefdim + coefmatcoldim - 1;
+    coefmat := Matrix(coefmatrowdim, coefmatcoldim);
+    for j to coefmatcoldim do
+        for i to polcoefdim do
+            coefmat[i + j - 1, j] := polvect[i];
+        end;
+    end;
+    return coefmat
+end proc;
+
 
 coefvect2pol := proc(vect, var)
 
