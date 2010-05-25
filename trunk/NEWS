@@ -1,0 +1,6 @@
+changes from 0.1 to 0.2
+=======================
+
+<maple>
+
+* adding gpgcd_real_gp: real coefficients version with the original gradient projection method.
