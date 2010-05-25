@@ -1,7 +1,7 @@
-# gpgcd-complex
+# gpgcd-real-gp
 # GPGCD library for polynomials with the real coefficients
 # Maple (computer algebra system) source code, tested on Maple 12
-# Copyright (c) 2009, Akira Terui
+# Copyright (c) 2009--2010, Akira Terui
 
 with (LinearAlgebra);
 with (PolynomialTools);
@@ -9,8 +9,10 @@ with (ArrayTools);
 
 gpgcd_real_gp := proc (f, g, var, deggcd, stopcriterion, numite_bound)
 
-# gpgcd_complex
-# the main driver of the GPGCD method for polynomials with complex coefficients
+# gpgcd_real_gp
+# the main driver of the GPGCD method for polynomials with real
+# coefficients
+# NOTE: this driver calls 'the original' gradient projection method
 
 # Inputs:
 # f, g: input polynomials
