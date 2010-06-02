@@ -6,15 +6,17 @@
 with (LinearAlgebra);
 with (PolynomialTools);
 with (ArrayTools);
+#with (ListTools); if ListTools is loaded, ListTools:-Transpose is
+# called where LinearAlgebra:-Transpose should be called
 
-gpgcd_real_multipol := proc (pols, var, deggcd, stopcriterion, numite_bound)
+gpgcd_real_multipol := proc (pol, var, deggcd, stopcriterion, numite_bound)
 
 # gpgcd_real_multipol
 # the main driver of the GPGCD method for multiple polynomials with
 # real coefficients
 
 # Inputs:
-# pols: a list of input polynomials
+# pol: a list of input polynomials
 # var: main variable
 # deggcd: the degree of approximate gcd
 # stopcriterion: stop criterion for itarations
@@ -33,262 +35,277 @@ gpgcd_real_multipol := proc (pols, var, deggcd, stopcriterion, numite_bound)
 # pnew_1 * anew_1 + ... + pnew_m * anew_m = 0
 
 local
-    i,
+    i, j,
     numpol, # the number of input polynomials
-#    degf,
-#    degg,
-    degp, # array of degrees of input polynomials
+    d, # array of degrees of input polynomials
+    pv, # array of coefficient vectors of input polynomials
+    cv, # array of coefficient vectors of cofactors
     degv, # deggcd - 1, degree of polynomials vanish
-    dega,
-    degb,
-    smat,
-    v0,
-    const0,
-    vv,
-    numite,
-    fnew,
-    gnew,
-    anew,
-    bnew,
-    fnewcoef,
-    gnewcoef,
-    anewconvmat,
-    bnewconvmat,
-    gcd,
-    d1,
-    d2,
-    d1coef,
-    d2coef,
-    residue1,
-    residue2,
-    perturbation,
-    perturbation2;
+    smat, # generalized subresultant matrix
+    v0, # the initial vector for the modified Newton method
+    v0dim, # dimension of v0
+    vv, # new iterate in the iterations
+    numite, # the number of iterations
+    newpv, # array of calculated perturbed polynomials
+    gv, # array of coefficient vectors of calculated gcds
+    tmpv, # temporary vector for calculating residues
+    tmp, # tmporary value for norms of residues
+    res, # array of norm of residues
+    resindex, # the index of gcd which gives the smallest residue
+    gcd; # the final answer of gcd
 
     # Initial setup
 
-    numpol := nops(pols);
-    degp := Array(1 .. numpol);
+    numpol := nops(pol);
+
+    pv := Array(1 .. numpol);
     for i to numpol do
-        degp[i] := degree(pols[i], var);
+        pv[i] := CoefficientVector['reverse'](pol[i], var);
     end do;
 
-    print(degp);
+#    print(pv);
+
+    d := Array(1 .. numpol);
+    for i to numpol do
+        d[i] := degree(pol[i], var);
+    end do;
+
+#    print(degp);
 
     degv := deggcd - 1;
-#    dega := degg - degv - 1;
-#    degb := degf - degv - 1;
-    smat := subresmat(pols, numpol, degp, var, degv);
+    smat := gensubresmat_vect(pv, numpol, d, degv);
+
+#    print(smat);
 
     # Initialize the coefficient vector for itaration
 
-#    v0 := gpgcd_init_real(f, g, var, deggcd);
-#    const0 := v0; # keep the initial value in const0
+    v0 := gpgcd_init_real_multipol(pv, smat, deggcd);
+    v0dim := Dimension(v0);
+
+#    print(v0);
+
+# DEBUG();
+
+#    pv, cv := vect2pols_real_multipol(v0, numpol, d, degv);
+
+#    return v0, pv, cv, d;
 
     # Call the iteration routine
 
-#    numite, vv := modnewtoniterate_real(const0, v0, degf, degg, degp,
-#                      stopcriterion, numite_bound);
+    numite, vv := modnewtoniterate_real_multipol(v0, numpol, d, degv,
+                      stopcriterion, numite_bound);
 
     # numite is the number of itarations taken in the optimization
     # vv is the result of the optimization
 
-#    if numite = numite_bound then
-#        userinfo(1, gpgcd_real, `does not converge within iteration`, numite);
-#    else
-#        userinfo(1, gpgcd_real, `converges at iteration`, numite);
-#    end if;
+    if numite = numite_bound then
+        userinfo(1, gpgcd_real_multipol, `does not converge within iteration`, numite);
+    else
+        userinfo(1, gpgcd_real_multipol, `converges at iteration`, numite);
+    end if;
 
-    # Construct polynomials from vv satisfying fnew * anew + gnew * bnew = 0
+#    return numite, vv;
 
-#    fnew := add(vv[i] * var ^ (degf + 1 - i), i = 1 .. degf + 1);
-#    gnew := add(vv[degf + 1 + i] * var ^ (degg + 1 - i), i = 1 .. degg + 1);
-#    anew := add(vv[degf + degg + 2 + i] * var ^ (dega + 1 - i),
-#                i = 1 .. dega + 1);
-#    bnew := add(vv[degf + degg + dega + 3 + i] * var ^ (degb + 1 - i),
-#                i = 1 .. degb + 1);
-#    bnew := - bnew;
+    # Construct polynomials from vv satisfying P_1 * U_1 + ... P_k * U_k = 0
 
-    # Construct GCDs by two ways
+    v0 := vv[1 .. v0dim];
+    newpv, cv := vect2pols_real_multipol(v0, numpol, d, degv);
+
+    for i from 2 to numpol do
+        cv[i] := -1.0 * cv[i];
+    end do;
+
+#    return newpv, cv;
+
+    # Construct 'numpol' candidates of GCDs
     #
-    # 1) Construct d1, a GCD from anew and fnew
+    # 1) Construct GCD gv[i] from newpv[i] (perturbed polynomials) and cv[i]
+    # (calculated cofactors)
 
-#    bnewconvmat := convmat(bnew, var, deggcd);
-#    fnewcoef := CoefficientVector['reverse'](fnew, var);
-#    d1coef := LeastSquares(bnewconvmat, fnewcoef);
-#    d1 := coefvect2pol(d1coef, var);
-#    userinfo(2, gpgcd_real, `d1 = `, print(d1));
+    gv := Array(1 .. numpol);
 
-    # 2) Construct d2, a GCD from bnew and gnew
+    for i to numpol do
+        gv[i] := LeastSquares(coefvect2convmat(cv[i], deggcd), newpv[i]);
+    end do;
 
-#    anewconvmat := convmat(anew, var, deggcd);
-#    gnewcoef := CoefficientVector['reverse'](gnew, var);
-#    d2coef := LeastSquares(anewconvmat, gnewcoef);
-#    d2 := coefvect2pol(d2coef, var);
-#    userinfo(2, gpgcd_real, `d2 = `, print(d2));
+    # 2) Compare which of gv[i] is the most appropriate as the common
+    # divisor by calculating the norm of residue from the original
+    # polynomials
 
-    # 3) Compare whether d1 or d2 is more appropriate as the common divisor
+    res := Array(1 .. numpol);
 
-#    residue1 := sqrt(
-#        polynorm(expand(d1 * bnew - fnew), var, 2)^2 +
-#        polynorm(expand(d1 * anew - gnew), var, 2)^2
-#                    );
-#    residue2 := sqrt(
-#        polynorm(expand(d2 * bnew - fnew), var, 2)^2 +
-#        polynorm(expand(d2 * anew - gnew), var, 2)^2
-#                    );
-#    userinfo(2, gpgcd_real, `sqrt(|d1 * bnew - fnew|^2 + |d1 * anew - gnew|^2) =`,
-#             residue1);
-#    userinfo(2, gpgcd_real, `sqrt(|d2 * bnew - fnew|^2 + |d2 * anew - gnew|^2) =`,
-#             residue2);
-#    if residue1 <= residue2 then
-#        gcd := d1;
-#        userinfo(2, gpgcd_real, `the selected common divisor is d1`);
-#    else
-#        gcd := d2;
-#        userinfo(2, gpgcd_real, `the selected common divisor is d2`);
-#    end;
+    for i to numpol do
+        for j to numpol do
+            tmpv := (coefvect2convmat(cv[j], deggcd) . gv[i]) - pv[j];
+            res[i] := res[i] + (tmpv . tmpv);
+        end do;
+        res[i] := sqrt(res[i]);
+    end do;
 
-    # Re-define fnew and gnew
+    userinfo(2, gpgcd_real_multipol, `residue: `, res);
 
-#    fnew := expand(gcd * bnew);
-#    gnew := expand(gcd * anew);
+    # calculate gv[i] which gives the minimum residue
 
-    # Calulate perturbations
+    tmp := res[1];
+    resindex := 1;
+    for i from 2 to numpol do
+        if (res[i] < tmp) then
+            tmp := res[i];
+            resindex := i;
+        end if;
+    end do;
 
-#    perturbation2 := polynorm(fnew - f, var, 2) ^ 2 +
-#    polynorm(gnew - g, var, 2) ^ 2;
-#    perturbation := sqrt(perturbation2);
+    userinfo(2, gpgcd_real_multipol, `the index of the calculated GCDs which gives the minimum perturbation from the given polynomials is`, resindex);
+
+    # Recalculate perturbed polynomials and the norm of relative
+    # perturbations using gv[resindex]
+    # relative perturbations of newpv[i] from pv[i] is put into res[i]
+
+    for i to numpol do
+        newpv[i] := coefvect2convmat(cv[i], deggcd) . gv[resindex];
+        res[i] := Norm(newpv[i] - pv[i], 2) / Norm(pv[i], 2);
+    end do;
+
+    # Convert vectors (gv[resindex], newpv[i] and cv[i]) to polynomials
+
+    userinfo(2, gpgcd_real_multipol, `newpv =`, newpv);
+
+    newpv := map(coefvect2pol, newpv, var);
+    cv := map(coefvect2pol, cv, var);
+    gcd := coefvect2pol(gv[resindex], var);
 
     # Return the result
+
+    return res, gcd, newpv, cv, numite;
 
 #    return perturbation, perturbation2, gcd, newpols, cofactors, numite;
 end proc;
 
-subresmat := proc (pols, numpol, degp, var, degv)
+gensubresmat := proc (p, numpol, d, var, degv)
 
-# subresmat: create a subresultant matrix of polynomials
-# this function uses SylvesterMatrix in LinearAlgebra package
+# gensubresmat: create a generalized subresultant matrix of
+# polynomials
 
 # Inputs:
-# f, g: polynomials
+# p: list of polynomials
+# numpol: the number of polynomials in pols
+# d: list of degrees in pols
 # var: main variable
 # degv: the degree of the subresultant matrix
 
 # Output:
-# the (degp)-th subresultant matrix of f and g
+# the (degv)-th generalized subresultant matrix of pols
 
-local degf, degg, smat;
+local
+    i, j, # indices
+    c; # array of convolution matrices of pols
     # with (LinearAlgebra);
-    degf := degree(f, var);
-    degg := degree(g, var);
-    smat := SylvesterMatrix(f, g, var);
-    return Transpose(SubMatrix(smat,[1 .. degg-degp,
-                                     degg+1 .. degg+(degf-degp)],
-                                [1 .. ColumnDimension(smat)-degp]))
+
+    c := Array(1 .. numpol - 1, 1 .. numpol);
+    for i to numpol - 1 do
+        c[i, 1] := convmat(p[i + 1], var, d[1] - 1 - degv);
+        c[i, i + 1] := convmat(p[1], var, d[i + 1] - 1 - degv);
+        for j from 2 to i do
+            c[i, j] := Matrix(d[i + 1] + d[1] - degv, d[j] - degv);
+        end do;
+        for j from i + 2 to numpol do
+            c[i, j] := Matrix(d[i + 1] + d[1] - degv, d[j] - degv);
+        end do;
+    end do;
+
+    return convert(convert(c, listlist), Matrix);
 end proc;
 
-subresmat_vect := proc (fvect, gvect, degp)
+gensubresmat_vect := proc (pv, numpol, d, degv)
 
-# subresmat_vect: create a subresultant matrix from the
+# gensubresmat_vect: create a subresultant matrix from the
 # coefficient vectors of univariate polynomials
 
 # Inputs:
-# fvect: coefficient vector of f
-#        for f = f_m x^m + ... + f_0 x^0,
-#        fvect := [f_m, ... , f_0]
-# gvect: coefficient vector of g
-#        for g = g_n x^n + ... + g_0 x^0,
-#        gvect := [g_n, ... , g_0]
-# degp: the degree of the subresulant matrix
+# pv: Array of coefficient vectors of polynomials, s.t.
+#        pv = [pv[1], ... , pv[n]],
+#        pv[i] := [f[i]_m[i], ... , f[i]_0] satisfying
+#        p[i] = f_[i]_m[i] x^m[i] + ... + f[i]_0 x^0,
+# numpol: the number of input polynomials
+# d: Array of degrees of pv
+# degv: the degree of the subresulant matrix
 
 # Output:
 # smat: the (degp)-th subresultant matrix of f and g
 
 local
     i, j, # indices
-    degf, # degree of f
-    degg, # degree of g
-    smat; # subresultant matrix to be returned
+    c; # array of convolution matrices of pols
 
     # with (LinearAlgebra);
 
-    degf := Dimension(fvect) - 1;
-    degg := Dimension(gvect) - 1;
-
-    # definition of the subresultant matrix
-
-    smat := Matrix(degf + degg - degp, degf + degg - 2 * degp);
-
-    # making columns consisting of the coefficients in f
-
-    for i to degg - degp do
-        for j to degf + 1 do
-            smat[i - 1 + j, i] := fvect[j];
+    c := Array(1 .. numpol - 1, 1 .. numpol);
+    for i to numpol - 1 do
+        c[i, 1] := coefvect2convmat(pv[i + 1], d[1] - 1 - degv);
+        c[i, i + 1] := coefvect2convmat(pv[1], d[i + 1] - 1 - degv);
+        for j from 2 to i do
+            c[i, j] := Matrix(d[i + 1] + d[1] - degv, d[j] - degv);
+        end do;
+        for j from i + 2 to numpol do
+            c[i, j] := Matrix(d[i + 1] + d[1] - degv, d[j] - degv);
         end do;
     end do;
 
-    # making columns consisting of the coefficients in g
-
-    for i to degf - degp do
-        for j to degg + 1 do
-            smat[i - 1 + j, degg - degp + i] := gvect[j];
-        end do;
-    end do;
-
-    return smat;
+    return convert(convert(c, listlist), Matrix);
 end proc;
 
-gpgcd_init_real := proc (f, g, var, deggcd)
+gpgcd_init_real_multipol := proc (pv, smat, deggcd)
 
-# gpgcd_init_complex: calculate the initial value for iterations
+# gpgcd_init_real_multipol: calculate the initial value for iterations
 
 # Inputs:
-# f, g: the given polynomials
-# var: the main variable
+# pv: Array of coefficient vectors of polynomials, s.t.
+#        pv = [pv[1], ... , pv[n]],
+#        pv[i] := [f[i]_m[i], ... , f[i]_0] satisfying
+#        p[i] = f_[i]_m[i] x^m[i] + ... + f[i]_0 x^0,
+# smat: generalized subresultant matrix of polynomials in pv
 # deggcd: degree of gcd
 
 # Output:
 # result: an initial vector for iterations
 
-local degf, degg, degp, dega, degb, fcoef, gcoef, smat, abcoef, result, i;
+local
+    pvf, # pv in double
+    pvfvect, # Vector of coefficients in pvf
+    smatf, # smat in double
+    cofactorcoef, # vector of coefficients of cofactors
+    i;
     # with(PolynomialTools);
     # with(ArrayTools);
     # with(LinearAlgebra);
-    degf := degree(f,var);
-    degg := degree(g,var);
-    degp := deggcd - 1;
-    dega := degg - degp - 1;
-    degb := degf - degp - 1;
-    fcoef := Transpose(CoefficientVector['reverse'](f,var));
-    gcoef := Transpose(CoefficientVector['reverse'](g,var));
-    fcoef := evalf(fcoef);
-    gcoef := evalf(gcoef);
-    smat := subresmat(f, g, var, degp);
-    abcoef := -1.0 *
-    SingularValues(smat,output = ('Vt'))[ColumnDimension(smat)];
-    result := Vector(Dimension(fcoef)+Dimension(gcoef)+Dimension(abcoef));
-    for i to degf+1 do
-        result[i] := fcoef[i];
-    end do;
-    for i to degg+1 do
-        result[degf+1+i] := gcoef[i];
-    end do;
-    for i to Dimension(abcoef) do
-        result[degf+degg+2+i] := abcoef[i];
-    end do;
-    return result
+
+    pvf := evalf(pv);
+    pvfvect := Vector['column'](convert(map(Transpose, pvf), list));
+
+#    print(pvfvect);
+
+    smatf := evalf(smat);
+    cofactorcoef := -1.0 *
+    SingularValues(smatf,output = ('Vt'))[ColumnDimension(smatf)];
+    cofactorcoef := Vector['column'](cofactorcoef);
+
+#DEBUG();
+
+#    print(cofactorcoef);
+
+    return convert(<pvfvect, cofactorcoef>, Vector['column'], datatype=float[8]);
 end proc;
 
-modnewtoniterate_real := proc (const0, inipoint, degf, degg, degp,
+modnewtoniterate_real_multipol := proc (inipoint, numpol, d, degv,
                      stopcriterion, numite)
 
-# modnewtoniterate_real: iteration routine of modified Newton method
+# modnewtoniterate_real_multipol: iteration routine of modified Newton method
 
 # Inputs:
-# const0, inipoint: the coefficient vectors of initial polynomials
-# degf: the degree of f
-# degg: the degree of g
-# degp: (the degree of approximate gcd) - 1
+# inipoint: the coefficient vectors of initial polynomials
+# numpol: the number of polynomials
+# d: array of degrees of polynomials
+# degv: (the degree of approximate gcd) - 1
 # stopcriterion: stop criterion for itarations
 # (the 2-norm of the update vector in iterations)
 # numite: an upper bound for the number of itrations
@@ -299,29 +316,40 @@ modnewtoniterate_real := proc (const0, inipoint, degf, degg, degp,
 # numite: the number of iterations taken
 # dv0: the coefficient vector of calculated polynomials
 
-local i, j, vv, vvdim, dv, dv0, dvnorm;
+local
+    i, j,
+    vv,
+    vvdim,
+    dv, # update vector for vector of coefficients in polynomials
+    dv0,
+    # solution vector of updates. Note: dv0 contains dv along with the
+    # Lagrange multiplirs
+    dvnorm; # the norm of dv
+
     vv := inipoint;
     vvdim := Dimension(inipoint);
     dv := Vector(vvdim);
+
+#DEBUG();
+
     for i to numite do
-        userinfo(2, modnewtoniterate_real, `Iteration`, i, print());
+        userinfo(2, modnewtoniterate_real_multipol, `Iteration`, i, print());
 
         # calculate the next iterate
 
-        dv0 := modnewtonsolve_real(const0, vv, degf, degg, degp);
-
-        for j to vvdim do
-            dv[j] := dv0[j];
-        end do;
+        dv0 := modnewtonsolve_real_multipol(inipoint, vv, numpol, d, degv);
+        dv := dv0[1 .. vvdim];
         dvnorm := Norm(dv, 2);
         vv := vv + dv;
 
-        userinfo(2, modnewtoniterate_real, `vv =`, vv, print());
-        userinfo(2, modnewtoniterate_real, `dv =`, dv, print());
-        userinfo(2, modnewtoniterate_real, `Norm(dv) =`, dvnorm, print());
+        userinfo(2, modnewtoniterate_real_multipol, `vv =`, vv, print());
+        userinfo(2, modnewtoniterate_real_multipol, `dv =`, dv, print());
+        userinfo(2, modnewtoniterate_real_multipol, `Norm(dv) =`, dvnorm, print());
 
         if dvnorm < stopcriterion then
-            userinfo(1, modnewtoniterate_real, `converges at iteration`, i);
+            userinfo(1, modnewtoniterate_real_multipol, `converges at iteration`, i);
+            # return the cofficient vector
+            # along with the Lagrange multipliers
             for j to vvdim do
                 dv0[j] := vv[j];
             end do;
@@ -330,7 +358,8 @@ local i, j, vv, vvdim, dv, dv0, dvnorm;
     end do;
 
     # if the value does not converge within the threshold number of
-    # iterations, then return the result at that time
+    # iterations, then return the result (the cofficient vector
+    # along with the Lagrange multipliers) at that time
 
     for j to vvdim do
         dv0[j] := vv[j];
@@ -338,190 +367,192 @@ local i, j, vv, vvdim, dv, dv0, dvnorm;
     return numite, dv0;
 end proc;
 
-modnewtonsolve_real := proc (const0, v0, degf, degg, degp)
+modnewtonsolve_real_multipol := proc (inipoint, v0, numpol, d, degv)
 
-# modnewtonsolve_real: calculating ONE iteration of the modified
+# modnewtonsolve_real_multipol: calculating ONE iteration of the modified
 # Newton method
 
 # Inputs:
-# const0: the vector of coefficients of initial polynomials
-# v0list: the vector of coefficients of current polynomials
-# degf: the degree of f
-# degg: the degree of g
-# degp: (the degree of approximate GCD) - 1
+# inipoint: the vector of coefficients of initial polynomials
+# v0: the vector of coefficients of current polynomials
+# numpol: the number of polynomials
+# d: array of the degree of polynomials
+# degv: (the degree of approximate GCD) - 1
 
 # Output:
 # LinearSolve(jmat, df): the output of LinearSolve
-# note that the output is a Maple 'vector'
+# note that the output is a Maple 'Vector'
 
-local i, dega, degb, fvect, gvect, avect, bvect, jmat, constraintvalue,
-    const0diff, dfdim, df;
+local i,
+    pv, # array of coefficient vectors of polynomials
+    cv, # array of coefficient vectors of cofactors
+    cvlist, # cv converted to flat list
+    pdim, # dimension of coefficients in pols (not cofactors) appears in v0
+    smat, # generalized subresultant matrix
+    jmat, # Jacobian matrix
+    coefMat, # coefficient matrix of the linear system
+    constraintMat, # constraint matrix
+    constraintVect, # constraint vector
+    constraintValue, # constraint value as constraintMat . constraintVector
+    inipointdiff, # difference of v0 from inipoint
+    df; # the right-hand-side of the linear system to be solved
+
     # with(LinearAlgebra);
-    dega := degg - degp - 1;
-    degb := degf - degp - 1;
-    fvect := v0[1 .. degf + 1];
-    gvect := v0[degf + 2 .. degf + degg + 2];
-    avect := v0[degf + degg + 3 .. degf + degg + dega + 3];
-    bvect := v0[degf + degg + dega + 4 .. degf + degg + dega + degb + 4];
-    jmat := jacobianmat_real(fvect, gvect, avect, bvect, degp);
-    constraintvalue := -1.0 * constrainteval_real(fvect, gvect, avect, bvect, degp);
-    # const0diff := Vector(degf + degg + dega + degb + 4);
-    const0diff := const0 - v0;
-    dfdim := 3 * (degf + degg - degp + 1);
-    df := Vector(dfdim);
-#    for i to degf + degg + 2 do
-    for i to degf + degg + dega + degb + 4 do
-        df[i] := const0diff[i];
-    end do;
-    for i to degf + degg - degp + 1 do
-        df[degf + degg + dega + degb + 4 + i] := constraintvalue[i];
-    end do;
-    userinfo(2, modnewtonsolve_real, `df =`, df, print());
-    return LinearSolve(jmat, df)
+
+    # get coefficient vectors in each polynomial from v0
+
+#DEBUG();
+
+    pv, cv := vect2pols_real_multipol(v0, numpol, d, degv);
+    cvlist := ListTools:-Flatten(convert(map(convert, cv, list), list));
+    pdim := Dimension(v0) - nops(cvlist);
+
+    # calculating Jacobian matrix of the constraint
+
+    smat := gensubresmat_vect(pv, numpol, d, degv);
+    jmat := jacobianmat_real_multipol(smat, cv, cvlist, numpol, d, degv);
+
+    # calculating coefficient matrix of the linear system
+
+    coefMat := < IdentityMatrix(ColumnDimension(jmat)), jmat |
+                 Transpose(jmat), Matrix(RowDimension(jmat)) >;
+
+    # calculating df, the right-hand-side of the linear system
+
+    constraintMat, constraintVect := constraintMatVect_real_multipol(smat, cvlist);
+    constraintValue := -1.0 * (constraintMat . constraintVect);
+
+#    inipointdiff := Vector['column'](inipoint)[1 .. pdim]
+#    - Vector['column'](v0)[1 .. pdim];
+    inipointdiff := Vector['column'](inipoint) - Vector['column'](v0);
+
+#    print(inipointdiff);
+
+#    df := <inipointdiff, Vector['column'](nops(cvlist)), constraintValue>;
+    df := <inipointdiff, constraintValue>;
+
+#DEBUG();
+
+    # solving the linear system
+
+    return convert(LinearSolve(coefMat, df), Vector, datatype=float[8]);
 end proc;
 
-jacobianmat_real := proc (fvect, gvect, avect, bvect, degp)
+vect2pols_real_multipol := proc (v, numpol, d, degv)
 
-# jacobianmat_real: calculate the Jacobian matrix for a iteration
+# vect2pols_real_multipol: convert vector to arrays of coefficients in
+# polynomials
 
 # Inputs:
-# fvect: the coefficient vector of f
-# gvect: the coefficient vector of g
-# avect: the coefficient vector of A
-# bvect: the coefficient vector of B
-# degp: (the degree of approximate GCD) - 1
+# v: the vector of coefficients of current polynomials
+# numpol: the number of polynomials
+# d: array of the degree of polynomials in v
+# degv: (the degree of approximate GCD) - 1
+
+# Outputs:
+# pv: array of coefficient vectors of polynomials
+# cv: array of coefficient vectors of cofactors
+# note that the output is a Maple 'vector'
+
+local
+    i, j,
+    pv, # see Outputs in the above
+    cv; # see Outputs in the above
+
+    pv := Array(1 .. numpol);
+    cv := Array(1 .. numpol);
+
+#DEBUG();
+
+    j := 1;
+    for i to numpol do
+        pv[i] := Vector['column'](v[j .. j + d[i]]);
+        j := j + d[i] + 1;
+    end do;
+#DEBUG();
+    for i to numpol do
+        cv[i] := Vector['column'](v[j .. j + d[i] - degv - 1]);
+        j := j + d[i] - degv;
+    end do;
+
+    return pv, cv;
+end proc;
+
+jacobianmat_real_multipol := proc (smat, cv, cvlist, numpol, d, degv)
+
+# jacobianmat_real_multipol: calculate the Jacobian matrix for a iteration
+
+# Inputs:
+# smat: generalized subresultant matrix
+# cv: array of coefficient vectors of cofactors
+# cvlist: cv converted to flat list
+# numpol: the number of polynomials
+# d: array of the degree of polynomials in pv
+# degv: (the degree of approximate GCD) - 1
 
 # Output
 # jmat: the Jacobian matrix
 
 local
     i, j, #indices
-    degf,
-    degg,
-    dega,
-    degb,
-    jmatdim,
-    jmat,
+    jmat, # Jacobian matrix, to be returned
+    jl, # the left block of jmat
+    r, # the row dimension of the i-th row block
     offset1,
     offset2;
 
     # with (LinearAlgebra);
 
-    degf := Dimension(fvect) - 1;
-    degg := Dimension(gvect) - 1;
-    dega := Dimension(avect) - 1;
-    degb := Dimension(bvect) - 1;
-    jmatdim := 3*(degf + degg - degp + 1);
-    jmat := Matrix(jmatdim);
-    for i to degf+degg+dega+degb+4 do
-        jmat[i,i] := 1.0;
-    end do;
-    offset2 := degf+degg+dega+degb+5;
+#DEBUG();
 
-    # Putting coefficients of a and b for the constraint of the norm
-    for i to dega+1 do
-        jmat[degf+degg+2+i, offset2] := -2.0*avect[i];
-        jmat[offset2, degf+degg+2+i] := 2.0*avect[i];
-    end do;
-    for i to degb+1 do
-        jmat[degf+degg+dega+3+i, offset2] := -2.0*bvect[i];
-        jmat[offset2, degf+degg+dega+3+i] := 2.0*bvect[i];
-    end do;
-
-    # Putting the coefficients of a
-    for i to degf+1 do
-        for j to dega+1 do
-            jmat[i, offset2+i+j-1] := -1.0*avect[j];
-            jmat[offset2+i+j-1, i] := avect[j];
+    jl := Array(1 .. numpol - 1, 1 .. numpol);
+    for i to numpol - 1 do
+        jl[i, 1] := coefvect2convmat(cv[i + 1], d[1]);
+        jl[i, i + 1] := coefvect2convmat(cv[1], d[i + 1]);
+        r := Dimension(cv[i + 1]) + d[1];
+        for j from 2 to i do
+            jl[i, j] := Matrix(r, d[j] + 1);
+        end do;
+        for j from i + 2 to numpol do
+            jl[i, j] := Matrix(r, d[j] + 1);
         end do;
     end do;
+    jl := Matrix(convert(jl, listlist));
 
-    # Putting the coefficients of b
-    offset1 := degf + 1;
-    for i to degg+1 do
-        for j to degb+1 do
-            jmat[offset1+i, offset2+i+j-1] := -1.0*bvect[j];
-            jmat[offset2+i+j-1, offset1+i] := bvect[j];
-        end do;
-    end do;
+#DEBUG();
 
-    # Putting the coefficients of f
-    offset1 := degf + degg + 2;
-    for i to dega+1 do
-        for j to degf+1 do
-            jmat[offset1+i, offset2+i+j-1] := -1.0*fvect[j];
-            jmat[offset2+i+j-1, offset1+i] := fvect[j];
-        end do;
-    end do;
+    jmat :=  < Matrix(1, ColumnDimension(jl)), jl |
+               2 * Matrix['row'](cvlist), smat >;
 
-    # Putting the coefficients of g
-    offset1 := degf + degg + dega + 3;
-    for i to degb+1 do
-        for j to degg+1 do
-            jmat[offset1+i, offset2+i+j-1] := -1.0*gvect[j];
-            jmat[offset2+i+j-1, offset1+i] := gvect[j];
-        end do;
-    end do;
     return jmat
 end proc;
 
-constrainteval_real := proc (fvect, gvect, avect, bvect, degp)
+constraintMatVect_real_multipol := proc (smat, cvlist)
 
-# constrainteval_real: evaluate the constraint for current iterate
+# constraintMatVect_real_multipol: calculates constraint matrix and vector
+# for caluclating
+# "constraint value" = constraintMat . constraintVect
 
 # Inputs:
-# fvect: the coefficient vector of f
-# gvect: the coefficient vector of g
-# avect: the coefficient vector of A
-# bvect: the coefficient vector of B
-# degp: (the degree of approximate GCD) - 1
+# smat: generalized subresultant matrix
+# cvlist: cv (array vectors of coefficients in cofactors) converted to
+# flat list
 
-# Output
-# valuevect: the value of constraint (in vector)
+local
+    i, j,
+    constraintMat, # constraint matrix
+    constraintVect; # constraint vector
 
-local i, degf, degg, dega, degb, smat, abvect, smatvect, valuevect;
     # with(LinearAlgebra);
-    degf := Dimension(fvect) - 1;
-    degg := Dimension(gvect) - 1;
-    dega := Dimension(avect) - 1;
-    degb := Dimension(bvect) - 1;
-#    smat := constraintsmat_real(fvect, gvect, degp);
-    smat := subresmat_vect(fvect, gvect, degp);
-    abvect := Vector(dega + degb + 2);
-    for i to dega + 1 do
-        abvect[i] := avect[i];
-    end do;
-    for i to degb + 1 do
-        abvect[dega + 1 + i] := bvect[i];
-    end do;
-    smatvect := smat . abvect;
-    valuevect := Vector(degf + degg - degp + 1);
-    for i to degf + degg - degp do
-        valuevect[i + 1] := smatvect[i];
-    end do;
-    valuevect[1] := DotProduct(abvect, abvect) - 1.0;
-    return valuevect
-end proc;
 
-constraintsmat_real := proc (fvect, gvect, degp)
-local i, j, degf, degg, dega, degb, smat;
-    # with(LinearAlgebra);
-    degf := Dimension(fvect) - 1;
-    degg := Dimension(gvect) - 1;
-    dega := degg - degp - 1;
-    degb := degf - degp - 1;
-    smat := Matrix(degf + degg - degp, dega + degb + 2);
-    for j to dega + 1 do
-        for i to degf + 1 do
-            smat[j + i - 1, j] := fvect[i];
-        end do;
-    end do;
-    for j to degb + 1 do
-        for i to degg + 1 do
-            smat[j + i - 1, dega + 1 + j] := gvect[i];
-        end do;
-    end do;
-    return smat
+    constraintMat :=
+    < Matrix[row](cvlist), smat |
+    Matrix(1, 1, evalf(-1)), Matrix(RowDimension(smat), 1) >;
+
+    constraintVect :=
+    < Vector['column'](cvlist), Vector['column'](1, evalf(1)) >;
+
+    return constraintMat, constraintVect;
 end proc;
 
 polynorm := proc (pol, var, norm)
@@ -556,6 +587,33 @@ convmat := proc (pol, var, deg)
 
 local i, j, polcoef, polcoefdim, coefmatrowdim, coefmatcoldim, coefmat;
     polcoef := CoefficientVector['reverse'](pol ,var);
+    polcoefdim := Dimension(polcoef);
+    coefmatrowdim := polcoefdim + deg;
+    coefmatcoldim := deg + 1;
+    coefmat := Matrix(coefmatrowdim, coefmatcoldim);
+    for j to coefmatcoldim do
+        for i to polcoefdim do
+            coefmat[i + j - 1, j] := polcoef[i];
+        end;
+    end;
+    return coefmat
+end proc;
+
+coefvect2convmat := proc (polcoef, deg)
+
+# coefvect2convmat: construct the convoluiton matrix of a polynomial
+# from the coefficient vector
+
+# Inputs:
+# polcoef: the coefficien vector of an input polynomial
+# deg: the degree of convolution
+
+# Output:
+# coefmat: the convolution matrix
+
+local
+    i, j,
+    polcoefdim, coefmatrowdim, coefmatcoldim, coefmat;
     polcoefdim := Dimension(polcoef);
     coefmatrowdim := polcoefdim + deg;
     coefmatcoldim := deg + 1;
